@@ -87,6 +87,17 @@ void serialize(Archive & ar, Matrix& a, const unsigned int version)
   }
 }
 
+//lsh 
+template<class Archive>
+void serialize(Archive & ar, RowVector & a, const unsigned int version)
+{
+  int dim = a.Ncols();
+  ar & dim;
+  if(dim != a.Ncols())
+    a.ReSize(dim);
+  for(int i=0;i<a.Storage();++i)
+    ar & a.Store()[i];
+}
 
 
 } }

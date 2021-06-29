@@ -48,7 +48,6 @@ bool duplicate_check_ec(partial_ex l_idx, int dot, int i_site, int nocc, int n_s
      int nb_h_ex = l_idx.second.first.size(); 
      int nb_p_ex = l_idx.second.second.size(); 
 
-
 //     //lsh test: temporarily block for S!=0 sampling
 //     // check 
 //     if (i_site < nocc){
@@ -86,47 +85,43 @@ bool duplicate_check_ec(partial_ex l_idx, int dot, int i_site, int nocc, int n_s
      return false;
 }
 
-bool duplicate_check_ec (partial_ex l_idx, int dot, int i_site, int nocc, int n_sites, int max_ex, const std::vector<int> reorder){
-     int na_h_ex = l_idx.first.first.size(); 
-     int na_p_ex = l_idx.first.second.size(); 
-     int nb_h_ex = l_idx.second.first.size(); 
-     int nb_p_ex = l_idx.second.second.size(); 
+bool skip_check (partial_occ l_occ, int dot, int i_site, int n_sites, int neleca, int nelecb){
+    // check particle qn
+    int neleca_l = 0, nelecb_l = 0;
+    for (char& occ: l_occ){
+        if ( occ == '2'){
+            neleca_l += 1;
+            nelecb_l += 1;
+        }
+        else if (occ == 'a'){
+            neleca_l += 1;
+        }
+        else if (occ == 'b'){
+            nelecb_l += 1;
+        }
+    }
+    // dot 0: |0>, 1: |b>, 2: |a>. 3:|ab>
+    if (dot == 3){
+        neleca_l += 1;
+        nelecb_l += 1;
+    }
+    else if (dot == 2){
+        neleca_l += 1;
+    }
+    else if (dot == 1){
+        nelecb_l += 1;
+    }
 
-//     //lsh test: temporarily block for S!=0 sampling
-//     // check 
-//     if (reorder[i_site] < nocc){
-//         if(dot == 0 || dot == 1) na_h_ex += 1; 
-//         if(dot == 0 || dot == 2) nb_h_ex += 1; 
-//         // # of holes can't be larger than maximum excitation
-//         if(na_h_ex + nb_h_ex > max_ex) return true;
-//     } 
-//     else{ 
-//         if(dot == 3 || dot == 2) na_p_ex += 1; 
-//         if(dot == 3 || dot == 1) nb_p_ex += 1; 
-//         // # of particles can't be larger than # of holes
-//         //if(na_p_ex > na_h_ex) return true;
-//         //if(nb_p_ex > nb_h_ex) return true;
-//     }
-// 
-//     // a, aa, ab, aaa, aab, aaab, aabb
-//     if (na_h_ex > 3) return true;
-//     if (nb_h_ex > 2) return true;
-//
-//     if (i_site == n_sites-1){
-//        if (!( (na_h_ex==0 && nb_h_ex==0) || (na_h_ex==1 && nb_h_ex==0) || (na_h_ex==2 && nb_h_ex==0) ||
-//               (na_h_ex==1 && nb_h_ex==1) || (na_h_ex==3 && nb_h_ex==0) || (na_h_ex==2 && nb_h_ex==1) ||  
-//               (na_h_ex==3 && nb_h_ex==1) || (na_h_ex==2 && nb_h_ex==2) ) ) return true;
-//     } 
-//     if (i_site == n_sites-2){
-//        if ( (na_h_ex==0 && nb_h_ex==2) ) return true;
-//        
-//        // <==> if (!( (na_h_ex==0 && nb_h_ex==0) || (na_h_ex==1 && nb_h_ex==0) || (na_h_ex==2 && nb_h_ex==0) ||
-//        //             (na_h_ex==1 && nb_h_ex==1) || (na_h_ex==0 && nb_h_ex==1) || (na_h_ex==3 && nb_h_ex==0) ||
-//        //             (na_h_ex==2 && nb_h_ex==1) || (na_h_ex==3 && nb_h_ex==1) || (na_h_ex==2 && nb_h_ex==2) ||
-//        //             (na_h_ex==1 && nb_h_ex==2) ) ) return true;
-//     } 
+    //std::cout << neleca_l << " / " << neleca << " " << nelecb_l << " / " << nelecb << std::endl;
+    if (neleca_l > neleca) return true; 
+    if (nelecb_l > nelecb) return true; 
 
-     return false;
+    // check Ms 
+
+
+
+    return false;
+
 }
 
 struct MPS2CI;
@@ -230,358 +225,340 @@ struct MPS2CI{
 //    }
     // set the value for each determinant to the overlap between mps
     void evaluate(const std::shared_ptr<simplemps> &mps, const std::vector<int> reorder, int nsite, int neleca, int nelecb, bool noreorder, double cutoff = 1e-10, int max_ex = 4) {
+        double timer_i = 0.0;
+        double timer_f = 0.0;
+
+        //mpi
+        boost::mpi::communicator world;
+        int nprocs = world.size();
+        int iproc  = world.rank();
+        int partition;
         std::vector<partial_wv> lwaves, rwaves;
-        // initialize lwaves
-        partial_wv lw;
-        RowVector oldwave(1);
-
-        //210625
-        //In singlet embedding, there is an ensemble of 2*s+1 state with different Sz. The norm of each state is 1/sqrt(2*s+1);
-        oldwave(1) = sqrt(dmrginp.molecule_quantum().get_s().getirrep()+1);
-        //oldwave(1) = 1.0;
-
-        //210625
-        // tuple (num_site d, leftq_for_d, rightq_for_d+1, Ms_for_d + dotMs_for_d+1) 
-        int Ms2 = -dmrginp.molecule_quantum().get_s().getirrep();  //This is 2*Sz of left quanta num : target 2 * Ms.
-        lw[std::make_tuple(0, 0, 0, Ms2)] = oldwave;
-        //lw[std::make_tuple(0, 0, 0, 0)] = oldwave;
-
-        //int Ms = 0;//This is 2*Sz of left quanta num.
-        lwaves.push_back(lw);
-        // initialize l_partial_occ
         std::vector<partial_occ> l_occs, r_occs;
-        l_occs.push_back( "" );
 
+        if(iproc == 0) {
+            // initialize lwaves
+            partial_wv lw;
+            RowVector oldwave(1);
+    
+            //210625
+            //In singlet embedding, there is an ensemble of 2*s+1 state with different Sz. The norm of each state is 1/sqrt(2*s+1);
+            oldwave(1) = sqrt(dmrginp.molecule_quantum().get_s().getirrep()+1);
+            //oldwave(1) = 1.0;
+    
+            //210625
+            // tuple (num_site d, leftq_for_d, rightq_for_d+1, Ms_for_d + dotMs_for_d+1) 
+            int Ms2 = -dmrginp.molecule_quantum().get_s().getirrep();  //This is 2*Sz of left quanta num : target 2 * Ms.
+            lw[std::make_tuple(0, 0, 0, Ms2)] = oldwave;
+            //lw[std::make_tuple(0, 0, 0, 0)] = oldwave;
+    
+            lwaves.push_back(lw);
+            // initialize l_partial_occ
+            l_occs.push_back( "" );
+
+        }
 //        //lsh test
 //        std::cout << "nsite: " << n_sites << std::endl;
 
         for (int i_site = 0; i_site < n_sites; i_site++)
         {
             int rw_len = 0;
-            auto lwi = lwaves.begin();
-            auto lxi = l_occs.begin();
+            // broadcast lwaves
+            if(iproc == 0) 
+            {
+              std::cout << " Sampling at " << i_site << " / " << n_sites << ". # of partials: " << lwaves.size() << ". Time " << (timer_f - timer_i) / (double) CLOCKS_PER_SEC << " (s). " << std::endl;
+              timer_i = std::clock();
 
-//            //lsh test
-//            int itest = 0; 
-            //while (lwi != lwaves.end())
-            while (lwi != lwaves.end() && lxi != l_occs.end())
-            { 
-                auto lwave = *lwi++;
-                auto l_occ = *lxi++;
-//                itest += 1; 
+              //std::cout << " test " << iproc << std::endl;
+              partition = (int) (lwaves.size() / nprocs);
+              for (int i=1; i<nprocs; i++){
+                  world.send(i, 4, partition);
+              }
+              int partition_master;
 
-//                if (i_site < nocc){
-//                    // l_idx: pair< pair<alpha_hole_idx, alpha_ptcl_idx>, pair<beta_hole_idx, beta_ptcl_idx> >
-//                    na_ex = l_idx.first.first.size(); 
-//                    nb_ex = l_idx.second.first.size(); 
-//                }
-//                else{
-//                    na_ex = l_idx.first.second.size(); 
-//                    nb_ex = l_idx.second.second.size(); 
-//                }
-//                //lsh test
-//                std::cout << "na_ex: " << na_ex << ", nb_ex: " << nb_ex << std::endl;
+              if (partition > 0){
+                  for (int i=1; i<nprocs-1; i++){
+                      //std::cout << " test " << iproc << " to " << i << std::endl;
+                      std::vector<partial_wv> lwaves_tmp(lwaves.cbegin()+i*partition, lwaves.cbegin()+(i+1)*partition);
+                      world.send(i, 0, lwaves_tmp);
+                      std::vector<partial_occ> loccs_tmp(l_occs.cbegin()+i*partition, l_occs.cbegin()+(i+1)*partition);
+                      world.send(i, 1, loccs_tmp);
+                  }
+                  {
+                      int i = nprocs-1;
+                      //std::cout << " test " << iproc << " to " << i << std::endl;
+                      std::vector<partial_wv> lwaves_tmp(lwaves.cbegin()+i*partition, lwaves.cend());
+                      world.send(i, 0, lwaves_tmp);
+                      std::vector<partial_occ> loccs_tmp(l_occs.cbegin()+i*partition, l_occs.cend());
+                      world.send(i, 1, loccs_tmp);
+                  }
+                  partition_master = partition;
+              }
+              else{
+                  partition_master = lwaves.size();
+              }
+              //std::cout << " send done " << iproc << std::endl;
 
-                // dot 0: |0>, 1: |b>, 2: |a>. 3:|ab>
-                for (int dot = 0; dot < 4; dot++)
-                {
-                    // consider only for a, aa, ab, aaa, aab, aaab, aabb for ecCCSD
-//                    bool duplicate;
-//                    if (noreorder) {
-//                        duplicate = duplicate_check_ec ( l_idx, dot, i_site, nocc, n_sites, max_ex );
-//                    }
-//                    else{
-//                        duplicate = duplicate_check_ec ( l_idx, dot, i_site, nocc, n_sites, max_ex, reorder );
-//                    }
-//
-//                    if (duplicate) continue;
+              auto lwi = lwaves.begin();
+              auto lxi = l_occs.begin();
+              assert (lwaves.size() == l_occs.size());
+              while (lwi != lwaves.begin()+partition_master)
+              { 
+                  auto lwave = *lwi++;
+                  auto l_occ = *lxi++;
+                  // dot 0: |0>, 1: |b>, 2: |a>. 3:|ab>
+                  for (int dot = 0; dot < 4; dot++)
+                  {
+                      // check nptcl, Ms
+                      // TODO: add time-reversal symm 
+//                      bool skip_symm;
+//                      skip_symm = skip_check ( l_occ, dot, i_site, n_sites, neleca, nelecb );
+//  
+//                      if (skip_symm) continue;
+  
+              //   RowVector(lwave) SiteMatrices                     RowVector(rwave)
+              //                        dot
+              //                         |                        =  
+              // leftq --*-- leftq .   --*-- rightq = LefttoRight      --*--
+              //      i_site          i_site+1                        i_site+1
+              //input:  i_site, dot, leftq, Ms, dotMs,
+              //output: rwave<SQ,RowVector>
+                      partial_wv rwave;
+                      mps->lw_dot_mat_new(i_site, dot, lwave, rwave);
+  
+                      double sqsum = 0;
+                      if (cutoff != 0) 
+                      {
+                          for (auto &m : rwave) 
+                          { 
+                              sqsum += dotproduct(m.second, m.second); 
+                          }
+  
+                          if (sqrt(sqsum) < cutoff){
+                              continue;
+                          }
+                      }
+                      rw_len += 1;
+                      rwaves.push_back(rwave);
+  
+                      // dot 0: |0>, 1: |b>, 2: |a>. 3:|ab>
+                      if (noreorder) {
+                          partial_occ r_occ(l_occ);  // copy constructor
+                          if (dot == 0) r_occ.append("0");
+                          if (dot == 1) r_occ.append("b");
+                          if (dot == 2) r_occ.append("a");
+                          if (dot == 3) r_occ.append("2");
+                          r_occs.push_back(r_occ);
+                      }
+                  }
+              }
 
+            }
+            else {
+              world.recv(0, 4, partition);
+              if (partition == 0) {continue;}
 
-//                    // update indices of configurations
-//                    if (i_site < nocc)   // idx for hole
-//                    {
-//                        // skip for excitation
-//                        if (na_ex+nb_ex == max_ex   && dot < 3)  continue;
-//                        if (na_ex+nb_ex == max_ex-1 && dot == 0) continue;
-//
-//
-////                        //lsh test
-////                        if (i_site == 2){
-////                            if (!(dot == 1 || dot == 3)) continue;
-////                            //if (!(dot == 1)) continue;
-////                        }
-////                        else if (i_site != 2){
-//////                            if (i_site == 0){
-//////
-//////                            }
-//////                            if (i_site != 0){
-////                                if (!(dot == 3)) continue;
-//////                            }
-////                        }
-//
-////                        //lsh test
-////                        std::cout << "isite, dot: " << i_site << " " << dot << std::endl;
-//                    } 
-//                    else                // idx for particle 
-//                    {
-//                        if (na_ex+nb_ex == max_ex   && dot > 0)  continue;
-//                        if (na_ex+nb_ex == max_ex-1 && dot == 3) continue;
-//
-////                        //lsh test
-////                        if (i_site == 4){
-////                            if (!(dot == 2 || dot == 0)) continue;
-////                            //if (!(dot == 2)) continue;
-////                        }
-////                        else if (i_site != 4){
-////                            if (!(dot == 0)) continue;
-////                        }
-//
-////                        //lsh test
-////                        std::cout << "isite, dot: " << i_site << " " << dot << std::endl;
-//                    } 
+              world.recv(0, 0, lwaves);
+              world.recv(0, 1, l_occs);
+              //std::cout << " test " << iproc << std::endl;
 
-            //   RowVector(lwave) SiteMatrices                     RowVector(rwave)
-            //                        dot
-            //                         |                        =  
-            // leftq --*-- leftq .   --*-- rightq = LefttoRight      --*--
-            //      i_site          i_site+1                        i_site+1
-            //input:  i_site, dot, leftq, Ms, dotMs,
-            //output: rwave<SQ,RowVector>
-                    partial_wv rwave;
-                    mps->lw_dot_mat_new(i_site, dot, lwave, rwave);
+              //lsh test
+              //std::cout << "Received numbers of lwaves for rank " << iproc << ": " << lwaves.size() << std::endl;
 
+              auto lwi = lwaves.begin();
+              auto lxi = l_occs.begin();
+              assert (lwaves.size() == l_occs.size());
+  
+              //while (lwi != lwaves.end())
+              while (lwi != lwaves.end() && lxi != l_occs.end())
+              { 
+                  auto lwave = *lwi++;
+                  auto l_occ = *lxi++;
+                  // dot 0: |0>, 1: |b>, 2: |a>. 3:|ab>
+                  for (int dot = 0; dot < 4; dot++)
+                  {
+                      // check nptcl, Ms
+                      // TODO: add time-reversal symm 
+//                      bool skip_symm;
+//                      skip_symm = skip_check ( l_occ, dot, i_site, n_sites, neleca, nelecb );
+//  
+//                      if (skip_symm) continue;
+  
+              //   RowVector(lwave) SiteMatrices                     RowVector(rwave)
+              //                        dot
+              //                         |                        =  
+              // leftq --*-- leftq .   --*-- rightq = LefttoRight      --*--
+              //      i_site          i_site+1                        i_site+1
+              //input:  i_site, dot, leftq, Ms, dotMs,
+              //output: rwave<SQ,RowVector>
+                      partial_wv rwave;
+                      mps->lw_dot_mat_new(i_site, dot, lwave, rwave);
+  
+                      double sqsum = 0;
+                      if (cutoff != 0) 
+                      {
+                          for (auto &m : rwave) 
+                          { 
+                              sqsum += dotproduct(m.second, m.second); 
+                          }
+  
+                          if (sqrt(sqsum) < cutoff){
+                              continue;
+                          }
+                      }
+                      rw_len += 1;
+                      rwaves.push_back(rwave);
+  
+                      // dot 0: |0>, 1: |b>, 2: |a>. 3:|ab>
+                      if (noreorder) {
+                          partial_occ r_occ(l_occ);  // copy constructor
+                          if (dot == 0) r_occ.append("0");
+                          if (dot == 1) r_occ.append("b");
+                          if (dot == 2) r_occ.append("a");
+                          if (dot == 3) r_occ.append("2");
+                          r_occs.push_back(r_occ);
+                      }
+                  }
+  
+              }
 
+            }
 
+            if(iproc != 0) 
+            {
+                assert(partition != 0);
+                if (i_site < n_sites-1){ 
+                    auto lwi = lwaves.begin();
+                    auto lxi = l_occs.begin();
+                    //while (lwi != lwaves.end())
+                    while (lwi != lwaves.end() && lxi != l_occs.end())
+                    { 
+                        auto lwave = *lwi++;
+                        auto l_occ = *lxi++;
+                        lwave.clear();
+                        l_occ.clear();
+                    } 
+                    lwaves.clear();
+                    l_occs.clear();
 
-                        double sqsum = 0;
-
-//lsh test: for debugging
-
-                    if (cutoff != 0) 
-                    {
-                        //l_idx: particle - hole index
-                        //int ref = l_idx.first.first.size() + l_idx.first.second.size() + l_idx.second.first.size() + l_idx.second.second.size();
-//                        bool protect = false;
-//                        // dot 0: |0>, 1: |b>, 2: |a>. 3:|ab>
-//                        //if ( ref == 0 ){
-//                            if ( i_site < nelecb ){
-//                               if ( dot == 3 ) protect = true;
-//                            }
-//                            else if ( i_site < neleca && i_site >= nelecb ){
-//                               if ( dot == 2 ) protect = true;
-//                            }
-//                            else
-//                            { 
-//                               if ( dot == 0 ) protect = true;
-//                            }
-//                        //}
-
-//                        if ( not protect ) {
-                            for (auto &m : rwave) 
-                            { 
-                                sqsum += dotproduct(m.second, m.second); 
-                            }
+                    world.send(0, 2, rwaves);
+                    world.send(0, 3, r_occs);
+                    auto rwi = rwaves.begin();
+                    auto rxi = r_occs.begin();
+                    //while (rwi != rwaves.end())
+                    while (rwi != rwaves.end() && rxi != r_occs.end())
+                    { 
+    										auto rwave = *rwi++;
+                        auto r_occ = *rxi++;
     
-                            if (sqrt(sqsum) < cutoff){
-                                continue;
-                            }
-                              //continue;
-//                        }
-//                        else 
-//                        {
-//                            //std::cout << i_site << " " << dot << " " << itest << std::endl; 
-//                        }
-
+                        rwave.clear();
+                        r_occ.clear();
+                    } 
+                    rwaves.clear();
+                    r_occs.clear();
+                }
+                else{ 
+                    std::vector<double> vals_slav;
+                    vals_slav.reserve(rw_len);
+                    int tmp = 0;
+                    for (auto &rwave : rwaves) { 
+                        for (auto &m : rwave) { 
+                            assert(m.second.Ncols() == 1);
+                            vals_slav.push_back(m.second.element(0));
+                            tmp += 1; 
+                        }
                     }
+                    assert(tmp == 1); //?
 
-// abandon CI coeff less than thresh
-//                    if (cutoff != 0) 
-//                    {
-//                        int ref = l_idx.first.first.size() + l_idx.first.second.size() + l_idx.second.first.size() + l_idx.second.second.size();
-//                        bool protect = false;
-//                        if ( ref == 0 ){
-//                            if ( reorder[i_site] < nocc ){
-//                               if ( dot == 3 ) protect = true;
-//                            }
-//                            else
-//                            { 
-//                               if ( dot == 0 ) protect = true;
-//                            }
-//                        }
-//
-//                        if ( not protect ) {
-//                            for (auto &m : rwave) 
-//                            { 
-//                                sqsum += dotproduct(m.second, m.second); 
-//                            }
-//    
-//                            if (sqrt(sqsum) < cutoff){
-//                                continue;
-//                            }
-//                        }
-//                        else 
-//                        {
-//                            //std::cout << i_site << " " << dot << " " << itest << std::endl; 
-//                        }
-//
-//                    }
-                    rw_len += 1;
+                    world.send(0, 2, vals_slav);
+                    world.send(0, 3, r_occs);
+                }
+            } 
+            else 
+            {
+                if (i_site < n_sites-1){ 
+                    auto lwi = lwaves.begin();
+                    auto lxi = l_occs.begin();
+                    //while (lwi != lwaves.end())
+                    while (lwi != lwaves.end() && lxi != l_occs.end())
+                    { 
+                        auto lwave = *lwi++;
+                        auto l_occ = *lxi++;
+                        lwave.clear();
+                        l_occ.clear();
+                    } 
+                    lwaves.clear();
+                    l_occs.clear();
+                    lwaves = rwaves;
+                    l_occs = r_occs;
+    
+                    auto rwi = rwaves.begin();
+                    auto rxi = r_occs.begin();
+                    //while (rwi != rwaves.end())
+                    while (rwi != rwaves.end() && rxi != r_occs.end())
+                    { 
+    										auto rwave = *rwi++;
+                        auto r_occ = *rxi++;
+    
+                        rwave.clear();
+                        r_occ.clear();
+                    } 
+                    rwaves.clear();
+                    r_occs.clear();
 
-                    rwaves.push_back(rwave);
-
-                    // l_idx: pair< pair<alpha_hole_idx, alpha_ptcl_idx>, pair<beta_hole_idx, beta_ptcl_idx> >
-                    // dot 0: |0>, 1: |b>, 2: |a>. 3:|ab>
-
-// index append 
-                    if (noreorder) {
-                        partial_occ r_occ(l_occ);  // copy constructor
-                        if (dot == 0) r_occ.append("0");
-                        if (dot == 1) r_occ.append("b");
-                        if (dot == 2) r_occ.append("a");
-                        if (dot == 3) r_occ.append("2");
-                        r_occs.push_back(r_occ);
-                    }
-//                    else {
-//                        partial_ex r_idx(l_idx);  // copy constructor
-//                        int i_mo = reorder[i_site];
-//                        if (i_mo < nocc)   // idx for hole
-//                        {
-//                            if (dot == 0){
-//                                r_idx.first.first.push_back(i_mo);
-//                                r_idx.second.first.push_back(i_mo);
-//                                r_idxs.push_back(r_idx);
-//                            } 
-//                            else if (dot == 1){
-//                                r_idx.first.first.push_back(i_mo);
-//                                r_idxs.push_back(r_idx);
-//                            } 
-//                            else if (dot == 2){
-//                                r_idx.second.first.push_back(i_mo);
-//                                r_idxs.push_back(r_idx);
-//                            }
-//                            else if (dot == 3){
-//                                r_idxs.push_back(r_idx);
-//                            }   
-//                        } 
-//                        else                // idx for particle 
-//                        {
-//                            if (dot == 0){
-//                                r_idxs.push_back(r_idx);
-//                            }   
-//                            else if (dot == 1){
-//                                r_idx.second.second.push_back(i_mo);
-//                                r_idxs.push_back(r_idx);
-//                            } 
-//                            else if (dot == 2){
-//                                r_idx.first.second.push_back(i_mo);
-//                                r_idxs.push_back(r_idx);
-//                            } 
-//                            else if (dot == 3){
-//                                r_idx.first.second.push_back(i_mo);
-//                                r_idx.second.second.push_back(i_mo);
-//                                r_idxs.push_back(r_idx);
-//                            } 
-//                        } 
-//                    }
-
-
-
-//                    //lsh test
-//                    std::cout << "isite: " << i_site << ", dot: " << dot << ", rw_len: " << rw_len << ", sqsum: " << sqsum << std::endl; 
-
-
+                    if (partition > 0){
+                       for (int i=1; i<nprocs; i++){
+                           std::vector<partial_wv> lwaves_tmp;
+                           world.recv(i, 2, lwaves_tmp);
+                           lwaves.insert( lwaves.end(), std::make_move_iterator(lwaves_tmp.begin()),
+                                          std::make_move_iterator(lwaves_tmp.end()) );
+                       }
+                       for (int i=1; i<nprocs; i++){
+                           std::vector<partial_occ> l_occs_tmp;
+                           world.recv(i, 3, l_occs_tmp);
+                           l_occs.insert( l_occs.end(), std::make_move_iterator(l_occs_tmp.begin()),
+                                          std::make_move_iterator(l_occs_tmp.end()) );
+                       }
+                    } 
 
                 }
 
-            }
-
-            if (i_site < n_sites-1){ 
-//                //lsh test
-//                //std::cout << "rwaves size: " << rwaves.size() << ", r_idxs size: " << r_idxs.size() << std::endl;
-//                std::cout << "rwaves size: " << rwaves.size() << std::endl;
-                auto lwi = lwaves.begin();
-                auto lxi = l_occs.begin();
-                //while (lwi != lwaves.end())
-                while (lwi != lwaves.end() && lxi != l_occs.end())
-                { 
-                    auto lwave = *lwi++;
-                    auto l_occ = *lxi++;
-                    lwave.clear();
-                    l_occ.clear();
-                } 
-                lwaves.clear();
-                l_occs.clear();
-                lwaves = rwaves;
-                l_occs = r_occs;
-
-////            //lsh test
-//            std::cout << "ith site: " << i_site << " rwaves size: " << rwaves.size() << std::endl;
-//            //int test = 0;
-
-                auto rwi = rwaves.begin();
-                auto rxi = r_occs.begin();
-                //while (rwi != rwaves.end())
-                while (rwi != rwaves.end() && rxi != r_occs.end())
-                { 
-										auto rwave = *rwi++;
-                    auto r_occ = *rxi++;
-
-
-//            int extest = r_idx.first.first.size() + r_idx.first.second.size() + r_idx.second.first.size() + r_idx.second.second.size();
-//            test += 1;
-//            std::cout << test << " " << extest << std::endl; 
-
-                    rwave.clear();
-                    r_occ.clear();
-//                    r_idx.first.second.clear();
-//                    r_idx.second.first.clear();
-//                    r_idx.second.second.clear();
-                } 
-                rwaves.clear();
-                r_occs.clear();
-            }
-            else{ 
-                vals.reserve(rw_len);
-
-                int tmp = 0;
-                for (auto &rwave : rwaves) { 
-//                    std::cout << "test1" << std::endl;
-                    for (auto &m : rwave) { 
-//                        std::cout << "test2" << std::endl;
-
-                        assert(m.second.Ncols() == 1);
-                        vals.push_back(m.second.element(0));
-                        tmp += 1; 
+                else{ 
+                    vals.reserve(rw_len);
+    
+                    int tmp = 0;
+                    for (auto &rwave : rwaves) { 
+                        for (auto &m : rwave) { 
+    
+                            assert(m.second.Ncols() == 1);
+                            vals.push_back(m.second.element(0));
+                            tmp += 1; 
+                        }
                     }
+                    assert(tmp == 1);
+
+                    if (partition > 0){
+                       for (int i=1; i<nprocs; i++){
+                           std::vector<double> vals_slav;
+                           world.recv(i, 2, vals_slav);
+                           vals.insert( vals.end(), std::make_move_iterator(vals_slav.begin()),
+                                        std::make_move_iterator(vals_slav.end()) );
+                       }
+                       for (int i=1; i<nprocs; i++){
+                           std::vector<partial_occ> r_occs_tmp;
+                           world.recv(i, 3, r_occs_tmp);
+                           r_occs.insert( r_occs.end(), std::make_move_iterator(r_occs_tmp.begin()),
+                                          std::make_move_iterator(r_occs_tmp.end()) );
+                       }
+                    } 
+
+                    occ_pattern = r_occs;
                 }
-                assert(tmp == 1);
-                occ_pattern = r_occs;
 
-//            //lsh test
-//            std::cout << "ith site: " << i_site << " rwaves size: " << rwaves.size() << " vals size:" << vals.size() << std::endl;
-//            int test = 0;
-//
-//                auto rwi = rwaves.begin();
-//                auto rxi = r_idxs.begin();
-//                //while (rwi != rwaves.end())
-//                while (rwi != rwaves.end() && rxi != r_idxs.end())
-//                { 
-//										auto rwave = *rwi++;
-//                    auto r_idx = *rxi++;
-//
-//
-//            int extest = r_idx.first.first.size() + r_idx.first.second.size() + r_idx.second.first.size() + r_idx.second.second.size();
-//            test += 1;
-//            std::cout << test << " " << extest << std::endl; 
-//
-//                    rwave.clear();
-//                    r_idx.first.first.clear();
-//                    r_idx.first.second.clear();
-//                    r_idx.second.first.clear();
-//                    r_idx.second.second.clear();
-//                } 
+              timer_f = std::clock();
 
-            }
+            } 
+
         }
 
     }
@@ -670,12 +647,18 @@ double parity_reorder(std::vector<uint8_t> det, std::vector<int> reorder, int no
 
 void MPS2CI_run(double cutoff, int max_ex)
 {
+  boost::mpi::communicator world;
   std::shared_ptr<simplemps> zeromps;
   if(dmrginp.spinAdapted())
   {
     std::shared_ptr<NonAbelianmps> mps = std::make_shared<NonAbelianmps>();
     //Use their own shared_ptr for serialization in boost broadcast;
-    mps->build(0);
+    if (dmrginp.targetState() == -1){
+        mps->build(0);
+    }
+    else{
+        mps->build(dmrginp.targetState());
+    }
     zeromps = mps;
   }
   else{
@@ -691,7 +674,10 @@ void MPS2CI_run(double cutoff, int max_ex)
   //int nelec = dmrginp.total_particle_number();
   //int neleca= (nelec + Ms2)/2;
   //int nelecb= (nelec - Ms2)/2;
+
+  if (world.rank() == 0) {
   std::cout << "nelec tot, alpha, beta =" << nelec << ", " << neleca << ", " << nelecb << std::endl;
+  }
 
   // reorder [ lattice_index ] = mo_index, rev_reorder [ mo_index ] = lattice_index
   double parity;
@@ -733,388 +719,24 @@ void MPS2CI_run(double cutoff, int max_ex)
   MPS2CI dtrie(nsite, true);
    
   dtrie.evaluate(zeromps, reorder, nsite, neleca, nelecb, noreorder, cutoff, max_ex);
-  std::cout << "noreorder: " << noreorder << std::endl;
-  // ================= parity and print =====================
-  std::cout << "extracted CI coeff from MPS" << std::endl;
-  std::cout << "total " << dtrie.vals.size() << " CI coeffs are sampled" << std::endl;
-  //std::cout << "typ,1,2,3,4,5,6,7,8,9" << std::endl;
+  if (world.rank() == 0) 
+  {
+      std::cout << "noreorder: " << noreorder << std::endl;
+      // ================= parity and print =====================
+      std::cout << "extracted CI coeff from MPS" << std::endl;
+      std::cout << "total " << dtrie.vals.size() << " CI coeffs are sampled" << std::endl;
+      //std::cout << "typ,1,2,3,4,5,6,7,8,9" << std::endl;
+    
+      for (auto it: sort_indices(dtrie.vals)){
+    
+          std::cout << dtrie.occ_pattern[it]; 
+          std::cout << "       " << dtrie.vals[it] << std::endl; 
+      }
+    
+      std::cout << "extracted CI coeff from MPS end" << std::endl;
+      std::cout << std::endl;
 
-  for (auto it: sort_indices(dtrie.vals)){
-
-//  for (int it = 0; it < dtrie.vals.size(); it++){ 
-//      int na_h_ex = dtrie.idx_ex[it].first.first.size(); 
-//      int na_p_ex = dtrie.idx_ex[it].first.second.size(); 
-//      int nb_h_ex = dtrie.idx_ex[it].second.first.size(); 
-//      int nb_p_ex = dtrie.idx_ex[it].second.second.size(); 
-//      if (na_h_ex == 0 && nb_h_ex == 0){
-
-      std::cout << dtrie.occ_pattern[it]; 
-//      }
-      std::cout << "       " << dtrie.vals[it] << std::endl; 
   }
-
-//  for (int it = 0; it < dtrie.vals.size(); it++){ 
-//      int na_h_ex = dtrie.idx_ex[it].first.first.size(); 
-//      int na_p_ex = dtrie.idx_ex[it].first.second.size(); 
-//      int nb_h_ex = dtrie.idx_ex[it].second.first.size(); 
-//      int nb_p_ex = dtrie.idx_ex[it].second.second.size(); 
-//
-//      assert(na_h_ex == na_p_ex);
-//      assert(nb_h_ex == nb_p_ex);
-//
-//      if (na_h_ex == 0 && nb_h_ex == 0){
-//
-//         parity = parity_ab_str(Refdet);
-//         std::cout << "rf,"; 
-//      }
-//      else if (na_h_ex == 1 && nb_h_ex == 0){
-//
-//         int i = dtrie.idx_ex[it].first.first[0];
-//         int a = dtrie.idx_ex[it].first.second[0];
-//          
-//         tmpdet.assign(Refdet.begin(), Refdet.end());
-//         tmpdet[rev_reorder[i]] = 1;
-//         tmpdet[rev_reorder[a]] = 2;
-//         parity  = parity_ab_str(tmpdet);
-//         parity *= parity_reorder(tmpdet, reorder, nocc);
-//         std::cout << "a," << i << "," << a << ","; 
-//      }
-//      else if (na_h_ex == 2 && nb_h_ex == 0){
-//
-//         int i = dtrie.idx_ex[it].first.first[0];
-//         int j = dtrie.idx_ex[it].first.first[1];
-//         int a = dtrie.idx_ex[it].first.second[0];
-//         int b = dtrie.idx_ex[it].first.second[1];
-//
-//         tmpdet.assign(Refdet.begin(), Refdet.end());
-//         tmpdet[rev_reorder[i]] = 1;
-//         tmpdet[rev_reorder[j]] = 1;
-//         tmpdet[rev_reorder[a]] = 2;
-//         tmpdet[rev_reorder[b]] = 2;
-//         parity  = parity_ab_str(tmpdet);
-//         parity *= parity_reorder(tmpdet, reorder, nocc);
-//
-//         std::sort(dtrie.idx_ex[it].first.first.begin(), dtrie.idx_ex[it].first.first.end());
-//         std::sort(dtrie.idx_ex[it].first.second.begin(),dtrie.idx_ex[it].first.second.end());
-//
-//         std::cout << "aa,";
-//         for (auto idx : dtrie.idx_ex[it].first.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].first.second)
-//             std::cout << idx << ",";
-//      }
-//      else if (na_h_ex == 1 && nb_h_ex == 1){
-//
-//         int i = dtrie.idx_ex[it].first.first[0];
-//         int a = dtrie.idx_ex[it].first.second[0];
-//         int j = dtrie.idx_ex[it].second.first[0];
-//         int b = dtrie.idx_ex[it].second.second[0];
-//
-//         tmpdet.assign(Refdet.begin(), Refdet.end());
-//         tmpdet[rev_reorder[i]] = 1;
-//         tmpdet[rev_reorder[a]] = 2;
-//         if (i != j) tmpdet[rev_reorder[j]] = 2;
-//         else  tmpdet[rev_reorder[j]] = 0;
-//         if (a != b) tmpdet[rev_reorder[b]] = 1;
-//         else  tmpdet[rev_reorder[b]] = 3;
-//         parity  = parity_ab_str(tmpdet);
-//         parity *= parity_reorder(tmpdet, reorder, nocc);
-//
-//         std::cout << "ab,";
-//         for (auto idx : dtrie.idx_ex[it].first.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].first.second)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].second.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].second.second)
-//             std::cout << idx << ",";
-//      }
-//      else if (na_h_ex == 3 && nb_h_ex == 0){
-//
-//         int i = dtrie.idx_ex[it].first.first[0];
-//         int j = dtrie.idx_ex[it].first.first[1];
-//         int k = dtrie.idx_ex[it].first.first[2];
-//         int a = dtrie.idx_ex[it].first.second[0];
-//         int b = dtrie.idx_ex[it].first.second[1];
-//         int c = dtrie.idx_ex[it].first.second[2];
-//
-//         tmpdet.assign(Refdet.begin(), Refdet.end());
-//         tmpdet[rev_reorder[i]] = 1;
-//         tmpdet[rev_reorder[j]] = 1;
-//         tmpdet[rev_reorder[k]] = 1;
-//         tmpdet[rev_reorder[a]] = 2;
-//         tmpdet[rev_reorder[b]] = 2;
-//         tmpdet[rev_reorder[c]] = 2;
-//         parity  = parity_ab_str(tmpdet);
-//         parity *= parity_reorder(tmpdet, reorder, nocc);
-//
-//         std::sort(dtrie.idx_ex[it].first.first.begin(), dtrie.idx_ex[it].first.first.end());
-//         std::sort(dtrie.idx_ex[it].first.second.begin(),dtrie.idx_ex[it].first.second.end());
-//
-//         std::cout << "aaa,";
-//         for (auto idx : dtrie.idx_ex[it].first.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].first.second)
-//             std::cout << idx << ",";
-//      }
-//      else if (na_h_ex == 2 && nb_h_ex == 1){
-//         int i = dtrie.idx_ex[it].first.first[0];
-//         int j = dtrie.idx_ex[it].first.first[1];
-//         int a = dtrie.idx_ex[it].first.second[0];
-//         int b = dtrie.idx_ex[it].first.second[1];
-//         int k = dtrie.idx_ex[it].second.first[0];
-//         int c = dtrie.idx_ex[it].second.second[0];
-//
-//         tmpdet.assign(Refdet.begin(), Refdet.end());
-//         tmpdet[rev_reorder[i]] = 1;
-//         tmpdet[rev_reorder[j]] = 1;
-//         tmpdet[rev_reorder[a]] = 2;
-//         tmpdet[rev_reorder[b]] = 2;
-//         if (i != k && j != k) tmpdet[rev_reorder[k]] = 2;
-//         else  tmpdet[rev_reorder[k]] = 0;
-//         if (a != c && b != c) tmpdet[rev_reorder[c]] = 1;
-//         else  tmpdet[rev_reorder[c]] = 3;
-//         parity  = parity_ab_str(tmpdet);
-//         parity *= parity_reorder(tmpdet, reorder, nocc);
-//
-//         std::sort(dtrie.idx_ex[it].first.first.begin(), dtrie.idx_ex[it].first.first.end());
-//         std::sort(dtrie.idx_ex[it].first.second.begin(),dtrie.idx_ex[it].first.second.end());
-//
-//         std::cout << "aab,";
-//         for (auto idx : dtrie.idx_ex[it].first.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].first.second)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].second.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].second.second)
-//             std::cout << idx << ",";
-//      }
-//      else if (na_h_ex == 3 && nb_h_ex == 1){
-//         int i = dtrie.idx_ex[it].first.first[0];
-//         int j = dtrie.idx_ex[it].first.first[1];
-//         int k = dtrie.idx_ex[it].first.first[2];
-//         int a = dtrie.idx_ex[it].first.second[0];
-//         int b = dtrie.idx_ex[it].first.second[1];
-//         int c = dtrie.idx_ex[it].first.second[2];
-//         int l = dtrie.idx_ex[it].second.first[0];
-//         int d = dtrie.idx_ex[it].second.second[0];
-//
-//         tmpdet.assign(Refdet.begin(), Refdet.end());
-//         tmpdet[rev_reorder[i]] = 1;
-//         tmpdet[rev_reorder[j]] = 1;
-//         tmpdet[rev_reorder[k]] = 1;
-//         tmpdet[rev_reorder[a]] = 2;
-//         tmpdet[rev_reorder[b]] = 2;
-//         tmpdet[rev_reorder[c]] = 2;
-//         if (i != l && j != l && k != l) tmpdet[rev_reorder[l]] = 2;
-//         else  tmpdet[rev_reorder[l]] = 0;
-//         if (a != d && b != d && c != d) tmpdet[rev_reorder[d]] = 1;
-//         else  tmpdet[rev_reorder[d]] = 3;
-//         parity  = parity_ab_str(tmpdet);
-//         parity *= parity_reorder(tmpdet, reorder, nocc);
-//
-//         std::sort(dtrie.idx_ex[it].first.first.begin(), dtrie.idx_ex[it].first.first.end());
-//         std::sort(dtrie.idx_ex[it].first.second.begin(),dtrie.idx_ex[it].first.second.end());
-//
-//         std::cout << "aaab,";
-//         for (auto idx : dtrie.idx_ex[it].first.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].first.second)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].second.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].second.second)
-//             std::cout << idx << ",";
-//      }
-//      else if (na_h_ex == 2 && nb_h_ex == 2){
-//         int i = dtrie.idx_ex[it].first.first[0];
-//         int j = dtrie.idx_ex[it].first.first[1];
-//         int a = dtrie.idx_ex[it].first.second[0];
-//         int b = dtrie.idx_ex[it].first.second[1];
-//         int k = dtrie.idx_ex[it].second.first[0];
-//         int l = dtrie.idx_ex[it].second.first[1];
-//         int c = dtrie.idx_ex[it].second.second[0];
-//         int d = dtrie.idx_ex[it].second.second[1];
-//
-//         tmpdet.assign(Refdet.begin(), Refdet.end());
-//         tmpdet[rev_reorder[i]] = 1;
-//         tmpdet[rev_reorder[j]] = 1;
-//         tmpdet[rev_reorder[a]] = 2;
-//         tmpdet[rev_reorder[b]] = 2;
-//         if (i != k && j != k) tmpdet[rev_reorder[k]] = 2;
-//         else  tmpdet[rev_reorder[k]] = 0;
-//         if (i != l && j != l) tmpdet[rev_reorder[l]] = 2;
-//         else  tmpdet[rev_reorder[l]] = 0;
-//         if (a != c && b != c) tmpdet[rev_reorder[c]] = 1;
-//         else  tmpdet[rev_reorder[c]] = 3;
-//         if (a != d && b != d) tmpdet[rev_reorder[d]] = 1;
-//         else  tmpdet[rev_reorder[d]] = 3;
-//         parity  = parity_ab_str(tmpdet);
-//         parity *= parity_reorder(tmpdet, reorder, nocc);
-//
-//         std::sort(dtrie.idx_ex[it].first.first.begin(), dtrie.idx_ex[it].first.first.end());
-//         std::sort(dtrie.idx_ex[it].first.second.begin(),dtrie.idx_ex[it].first.second.end());
-//         std::sort(dtrie.idx_ex[it].second.first.begin(), dtrie.idx_ex[it].second.first.end());
-//         std::sort(dtrie.idx_ex[it].second.second.begin(),dtrie.idx_ex[it].second.second.end());
-//
-//         std::cout << "aabb,";
-//         for (auto idx : dtrie.idx_ex[it].first.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].first.second)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].second.first)
-//             std::cout << idx << ",";
-//         for (auto idx : dtrie.idx_ex[it].second.second)
-//             std::cout << idx << ",";
-//      }
-//      else{
-//         std::cout << "what is it?" << std::endl;
-//         continue;
-//      }
-//      std::cout << "       " << parity * dtrie.vals[it] << std::endl; 
-//  }
-
-
-
-
-//  ia = -1;
-//  for (int a = 0; a < nvir; a++){
-//  for (int i = nocc-1; i > -1; i--){
-//      ia   += 1;
-//      if (std::fabs(S_a[ia]) > thresh) std::cout << "a," << i << "," << a<< ",      " << S_a[ia] << std::endl;
-//  }
-//  }
-//  // Daa assign 
-//  ijab = -1;
-//  for (int b = 1; b < nvir; b++){
-//  for (int a = 0; a < b; a++){
-//  for (int j = nocc-1; j > 0; j--){
-//  for (int i = j-1; i > -1; i--){
-//      ijab += 1;
-//      if (std::fabs(D_aa[ijab]) > thresh) std::cout << "aa," << i << ","  << j << ","
-//                << a<< ","  << b<< ",      " << D_aa[ijab] << std::endl;
-//  }
-//  }
-//  }
-//  }
-//  // Dab assign 
-//  ia = -1;
-//  for (int a = 0; a < nvir; a++){
-//  for (int i = nocc-1; i > -1; i--){
-//      double parity_ia = parity_ci_to_cc(i, 1, nocc);
-//      ia   += 1;
-//      jb    =-1;
-//      for (int b = 0; b < nvir; b++){
-//      for (int j = nocc-1; j > -1; j--){
-//          jb   += 1;
-//          if (std::fabs(D_ab[ia][jb]) > thresh)
-//              std::cout << "ab," << i << ","  << a<< "," << j
-//                        << ","  << b<< ",      " << D_ab[ia][jb] << std::endl;
-//      }
-//      }
-//  }
-//  }
-//  // Taaa assign
-//  ijkabc = -1;
-//  for (int c = 2; c < nvir; c++){
-//  for (int b = 1; b < c; b++){
-//  for (int a = 0; a < b; a++){
-//  for (int k = nocc-1; k > 1; k--){
-//  for (int j = k-1; j > 0; j--){
-//  for (int i = j-1; i > -1; i--){
-//      ijkabc += 1;
-//      if (std::fabs(T_aaa[ijkabc]) > thresh)
-//      std::cout << "aaa," << i << ","  << j << "," << k 
-//                << ","  << a<< ","  << b<< ","  << c
-//                << ",      " << T_aaa[ijkabc] << std::endl;
-//  }
-//  }
-//  }
-//  }
-//  }
-//  }
-//  // Taab assign
-//  ijab = -1;
-//  for (int b = 1; b < nvir; b++){
-//  for (int a = 0; a < b; a++){
-//  for (int j = nocc-1; j > 0; j--){
-//  for (int i = j-1; i > -1; i--){
-//      double parity_ijab = parity_ci_to_cc(i+j, 2, nocc);
-//      ijab += 1;
-//      kc = -1;
-//      for (int c = 0; c < nvir; c++){
-//      for (int k = nocc-1; k > -1; k--){
-//          kc   += 1; 
-//          if (std::fabs(T_aab[ijab][kc]) > thresh)
-//          std::cout << "aab," << i << ","  << j << "," << a
-//                    << ","  << b<< ","  << k << ","  << c
-//                    << ",      " << T_aab[ijab][kc] << std::endl;
-//      }
-//      }
-//  }
-//  }
-//  }
-//  }
-//  // Qaaab assign
-//  ijkabc = -1;
-//  for (int c = 2; c < nvir; c++){
-//  for (int b = 1; b < c; b++){
-//  for (int a = 0; a < b; a++){
-//  for (int k = nocc-1; k > 1; k--){
-//  for (int j = k-1; j > 0; j--){
-//  for (int i = j-1; i > -1; i--){
-//      double parity_ijkabc = parity_ci_to_cc(i+j+k, 3, nocc);
-//      ijkabc += 1;
-//      ld = -1;
-//      for (int d = 0; d < nvir; d++){
-//      for (int l = nocc-1; l > -1; l--){
-//          ld   += 1; 
-//          if (std::fabs(Q_aaab[ijkabc][ld]) > thresh)
-//          std::cout << "aaab," << i << ","  << j << "," << k 
-//                    << ","  << a<< ","  << b<< ","  << c
-//                    << ","  << l << ","  << d
-//                    << ",      " << Q_aaab[ijkabc][ld] << std::endl;
-//      }
-//      }
-//  }
-//  }
-//  }
-//  }
-//  }
-//  }
-//  // Qaabb assign
-//  ijab = -1;
-//  for (int b = 1; b < nvir; b++){
-//  for (int a = 0; a < b; a++){
-//  for (int j = nocc-1; j > 0; j--){
-//  for (int i = j-1; i > -1; i--){
-//      double parity_ijab = parity_ci_to_cc(i+j, 2, nocc);
-//      ijab += 1;
-//      klcd = -1;
-//      for (int d = 1; d < nvir; d++){
-//      for (int c = 0; c < d; c++){
-//      for (int l = nocc-1; l > 0; l--){
-//      for (int k = l-1; k > -1; k--){
-//          double parity_klcd = parity_ci_to_cc(k+l, 2, nocc);
-//          klcd += 1; 
-//          if (std::fabs(Q_aabb[ijab][klcd]) > thresh)
-//          std::cout << "aabb," << i << ","  << j << "," << a
-//                    << ","  << b<< ","  << k << ","  << l 
-//                    << ","  << c<< ","  << d
-//                    << ",      " << Q_aabb[ijab][klcd] << std::endl;
-//      }
-//      }
-//      }
-//      }
-//  }
-//  }
-//  }
-//  }
-  std::cout << "extracted CI coeff from MPS end" << std::endl;
-  std::cout << std::endl;
-
   return;
 }
 
@@ -1142,7 +764,51 @@ int main(int argc, char* argv[])
   int max_ex = 10;
   double cutoff = dmrginp.stochasticpt_tol();
 
+  //lsh test
   MPS2CI_run(cutoff, max_ex);
+
+//  //lsh test : mpi
+//  if(world.rank() == 0) {
+//    //std::vector<partial_wv> lwaves;
+//    partial_wv lw;
+//    RowVector test(1);
+//    test(1) = 7;
+//    SQ a (0, 0, 0, 7);
+//    //a=std::make_tuple(); 
+//    lw[a] = test;
+//    //Matrix test(1,1);
+//    std::cout << "rank " << world.rank() << " throw" << lw[a].element(0) << std::endl;
+//
+//    {
+//    //std::vector<int> test_tmp(test.cbegin(), test.cbegin()+2);
+//    world.send(1, 0, lw);
+//    }
+////    {
+////    std::vector<int> test_tmp(test.cbegin()+2, test.cbegin()+4);
+////    world.send(2, 0, test_tmp);
+////    }
+//
+////    for (int i=1; i<3; i++){
+////        world.send(i, i, test);
+////    }
+//  }
+//  else {
+//    //std::vector<int> test;
+//    partial_wv lw;
+//    //RowVector test;
+//    SQ a (0, 0, 0, 7);
+//    //std::tuple a;
+//    //a=std::make_tuple(0, 0, 0, 7); 
+//    //Matrix test;
+//    world.recv(0, 0, lw);
+//    std::cout << "Received GPS positions:" << std::endl;
+//    std::cout << "rank " << world.rank() << " received " << lw[a].element(0) << std::endl;
+//
+////    for(int i=0;i<test.size(); i++) {
+////      std::cout << "rank " << world.rank() << " received " << test[i] << std::endl;
+////    }
+//    }
+
 
   return 0;
 }

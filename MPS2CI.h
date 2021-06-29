@@ -9,6 +9,9 @@
 #include <unordered_map>
 #include "CIcoeff_from_mps_TRIE.h"
 #include <cmath>        // std::abs
+#include "boost_serialization_unordered_map.h"
+#include "boost_serialization_tuple.h"
+//#include "boost_serialization_rowvector.h"
 
 // SQ(d, leftq_for_d, rightq_for_d+1, Ms_for_d + dotMs_for_d+1) 
 typedef std::tuple<int, int, int, int> SQ;
