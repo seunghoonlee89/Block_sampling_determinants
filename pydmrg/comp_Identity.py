@@ -3,17 +3,16 @@ import numpy
 from pyscf.tools import fcidump 
 
 Identity_FCIDUMP = "Identity"
-def writeIdentityIntegralFile(nmo, nelec, filename):
-    with open(filename, 'w') as fout:
-        if not isinstance(nelec, (int, numpy.number)):
-            ms = abs(nelec[0] - nelec[1])
-            nelec = nelec[0] + nelec[1]
-        fcidump.write_head(fout, nmo, nelec, ms=ms)
-        for i in range(20):
-            fout.write ("%20.15f  %d  %d  %d  %d\n"%(1/31, i+1, i+1, 0, 0))
-        fout.write ("%20.15f  %d  %d  %d  %d\n"%(0.0, 0, 0, 0, 0))
+def writeIdentityIntegralFile(nmo, nelec, sym, fout):
+    if not isinstance(nelec, (int, numpy.number)):
+        ms = abs(nelec[0] - nelec[1])
+        nelec = nelec[0] + nelec[1]
+    fcidump.write_head(fout, nmo, nelec, ms=ms, orbsym=sym)
+    for i in range(20):
+        fout.write (1/31, i+1, " ", i+1, " ", 0, " ", 0)
+    fout.write (0, " ", 0, " ", 0, " ", 0, " ", 0)
 
-def Write_input_for_MPS_to_CI(nelectron, symmetry, thresh, target, spin2, FCIDUMP, scratch):
+def Write_input_for_MPS_to_CI(nelectron, symmetry, thresh, target, spin2, FCIDUMP):
     filename='extractCI.conf'
     with open(filename, 'w') as fout:
         fout.write('%s %d\n'%('nelec', nelectron))
@@ -73,11 +72,11 @@ def Write_input_for_MPS_to_CI(nelectron, symmetry, thresh, target, spin2, FCIDUM
         fout.write('%s\n'%('mem 100 g'))
 
 
-def extracting_CI_coeff_from_MPS(nelectron, spin2, thresh, target, scratch, FCIDUMP, nprocs, symmetry="c1"):
+def extracting_CI_coeff_from_MPS(nelectron, spin2, thresh, target, scratch, FCIDUMP, symmetry="c1"):
     CITRIEEXE1 = '/home/slee89/opt/stackblocklatest/stackblock_stopt/TRIEdeterminant/CITRIE'
-    CITRIEEXE2 = 'mpirun -n %d /home/slee89/opt/Block_pt_stored/TRIEdeterminant/MPS2CI_det'%(nprocs)
+    CITRIEEXE2 = '/home/slee89/opt/Block_pt_stored/TRIEdeterminant/MPS2CI_det'
    
-    Write_input_for_MPS_to_CI(nelectron, symmetry, thresh, target, spin2, FCIDUMP, scratch)
+    Write_input_for_MPS_to_CI(nelectron, symmetry, thresh, target, spin2, FCIDUMP)
     
     #TODO: mc.CITRIE(cutoff)
     #      would make input of CITRIE and run CITRIE
@@ -89,21 +88,19 @@ def extracting_CI_coeff_from_MPS(nelectron, spin2, thresh, target, scratch, FCID
 
 if __name__ == '__main__':
 
-    if len(sys.argv) == 10:
+    if len(sys.argv) == 8:
         nmo   = int(sys.argv[1])
-        nelea = int(sys.argv[2])
-        neleb = int(sys.argv[3])
-        spin2 = int(sys.argv[4])
-        thrsh = float(sys.argv[5])
-        target= int(sys.argv[6])
-        scr   = sys.argv[7]
-        symm  = sys.argv[8]
-        nprocs= int(sys.argv[9])
+        nele  = int(sys.argv[2])
+        spin2 = int(sys.argv[3])
+        thrsh = float(sys.argv[4])
+        target= int(sys.argv[5])
+        scr   = sys.argv[6]
+        symm  = sys.argv[7]
     else:
         raise ValueError("""
             Usage: 
-                python extracting_CI_from_stackblock.py (nmo) (nelec alpha) (nelec beta) (2*spin) (thresh) (targetstate) (scratchdir) (point group symmetry) (number of process)
+                python extracting_CI_from_stackblock.py (nmo) (nelec) (2*spin) (thresh) (targetstate) (scratchdir) (point group symmetry)
         """)
 
-    writeIdentityIntegralFile(nmo, [nelea, neleb], Identity_FCIDUMP)
-    extracting_CI_coeff_from_MPS(nelea+neleb, spin2, thrsh, target, scr, Identity_FCIDUMP, nprocs, symm)
+    writeIdentityIntegralFile(nmo, nele, symm, Identity_FCIDUMP)
+    extracting_CI_coeff_from_MPS(nele, spin2, thrsh, target, scr, Identity_FCIDUMP, symm)
